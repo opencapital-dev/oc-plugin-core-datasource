@@ -35,9 +35,10 @@ var (
 // {source, jwt, window} to the sidecar. The sidecar fetches the rows and runs
 // the source; the backend frames the returned neutral result.
 type Datasource struct {
-	settings *models.PluginSettings
-	pc       *pluginclient.Client
-	compute  *computeclient.Client
+	settings    *models.PluginSettings
+	pc          *pluginclient.Client
+	compute     *computeclient.Client
+	installRoot string
 }
 
 // NewDatasource is the SDK factory. Grafana calls it once per
@@ -59,10 +60,16 @@ func NewDatasource(_ context.Context, src backend.DataSourceInstanceSettings) (i
 		}
 	}
 
+	installRoot, err := pluginsInstallRoot(settings.PluginsInstallDir)
+	if err != nil {
+		log.DefaultLogger.Warn("core-datasource: could not derive plugins install root; metric refs will fail", "error", err)
+	}
+
 	return &Datasource{
-		settings: settings,
-		pc:       pc,
-		compute:  computeclient.New(settings.ComputeURL, &http.Client{Timeout: 60 * time.Second}),
+		settings:    settings,
+		pc:          pc,
+		compute:     computeclient.New(settings.ComputeURL, &http.Client{Timeout: 60 * time.Second}),
+		installRoot: installRoot,
 	}, nil
 }
 
@@ -78,10 +85,13 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 	return resp, nil
 }
 
-// panelModel is the JSON shape stored in the panel's query JSON. The editor now
-// produces just the Python source; older binding/outputMode fields are ignored.
+// panelModel is the JSON shape stored in the panel's query JSON. `source` is an
+// optional inline override; `ref` names a shipped metric; `vars` carries the
+// frontend-resolved dashboard variables for backend substitution.
 type panelModel struct {
-	Source string `json:"source"`
+	Source string            `json:"source"`
+	Ref    string            `json:"ref"`
+	Vars   map[string]string `json:"vars"`
 }
 
 func (d *Datasource) query(ctx context.Context, q backend.DataQuery) backend.DataResponse {
@@ -90,6 +100,12 @@ func (d *Datasource) query(ctx context.Context, q backend.DataQuery) backend.Dat
 		return backend.ErrDataResponse(backend.StatusBadRequest, fmt.Sprintf("json unmarshal: %v", err))
 	}
 
+	code, err := selectCode(pm, d.installRoot)
+	if err != nil {
+		return backend.ErrDataResponse(backend.StatusBadRequest, err.Error())
+	}
+	code = substituteVars(code, pm.Vars)
+
 	jwt, org, err := d.jwtAndOrg(ctx)
 	if err != nil {
 		return backend.ErrDataResponse(backend.StatusInternal, fmt.Sprintf("mint read-gateway jwt: %v", err))
@@ -97,8 +113,8 @@ func (d *Datasource) query(ctx context.Context, q backend.DataQuery) backend.Dat
 
 	from, to := q.TimeRange.From.UnixMicro(), q.TimeRange.To.UnixMicro()
 
-	if !hasPluginPrefix(pm.Source) {
-		frame, err := d.compute.Compute(ctx, pm.Source, jwt, from, to)
+	if !hasPluginPrefix(code) {
+		frame, err := d.compute.Compute(ctx, code, jwt, from, to)
 		if err != nil {
 			var ce *computeclient.ComputeError
 			if errors.As(err, &ce) {
@@ -117,7 +133,7 @@ func (d *Datasource) query(ctx context.Context, q backend.DataQuery) backend.Dat
 		return backend.ErrDataResponse(backend.StatusInternal, "core-datasource: org id unknown — set orgId in jsonData or ensure the request identity carries one")
 	}
 
-	bindings, err := d.compute.Plan(ctx, pm.Source)
+	bindings, err := d.compute.Plan(ctx, code)
 	if err != nil {
 		var ce *computeclient.ComputeError
 		if errors.As(err, &ce) {
@@ -139,7 +155,7 @@ func (d *Datasource) query(ctx context.Context, q backend.DataQuery) backend.Dat
 		return backend.ErrDataResponse(backend.StatusBadRequest, fmt.Sprintf("resolve bindings: %v", err))
 	}
 
-	frame, err := d.compute.ComputeWithPrefetched(ctx, pm.Source, jwt, from, to, prefetched)
+	frame, err := d.compute.ComputeWithPrefetched(ctx, code, jwt, from, to, prefetched)
 	if err != nil {
 		var ce *computeclient.ComputeError
 		if errors.As(err, &ce) {
