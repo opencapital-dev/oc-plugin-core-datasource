@@ -31,8 +31,8 @@ jobs:
       # The assembler is told to package only linux-amd64,linux-arm64 to match.
       - name: build backend (linux-amd64 + linux-arm64)
         run: |
-          mage Linux
-          CC=aarch64-linux-gnu-gcc mage LinuxARM64
+          mage build:linux
+          CC=aarch64-linux-gnu-gcc mage build:linuxARM64
       - uses: sigstore/cosign-installer@v3
       - uses: ignacioballester/oc-plugin-publish-action@v1
         with:
