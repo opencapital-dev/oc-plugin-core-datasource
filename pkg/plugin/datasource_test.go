@@ -12,7 +12,7 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 
-	"github.com/portfolio-management/computeclient"
+	"github.com/ignacioballester/oc-plugin-sdk/computeclient"
 
 	_ "github.com/mutecomm/go-sqlcipher/v4"
 

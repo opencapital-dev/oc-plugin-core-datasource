@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/portfolio-management/dsl"
+	"github.com/ignacioballester/oc-plugin-sdk/dsl"
 )
 
 // introspectView returns the column names of a gw_ view in declaration order

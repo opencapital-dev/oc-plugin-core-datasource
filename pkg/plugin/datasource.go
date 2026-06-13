@@ -18,10 +18,10 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 
-	"github.com/portfolio-management/computeclient"
-	"github.com/portfolio-management/computeframe"
-	"github.com/portfolio-management/dsl"
-	"github.com/portfolio-management/pluginclient"
+	"github.com/ignacioballester/oc-plugin-sdk/computeclient"
+	"github.com/ignacioballester/oc-plugin-sdk/computeframe"
+	"github.com/ignacioballester/oc-plugin-sdk/dsl"
+	"github.com/ignacioballester/oc-plugin-sdk/pluginclient"
 
 	"github.com/portfoliomangement/query-service/pkg/models"
 )

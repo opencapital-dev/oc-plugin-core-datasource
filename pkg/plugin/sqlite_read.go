@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/portfolio-management/computeclient"
+	"github.com/ignacioballester/oc-plugin-sdk/computeclient"
 )
 
 // readRows executes sqlStr with args and maps the result set into a PrefetchedFrame.
