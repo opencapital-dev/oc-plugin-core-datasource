@@ -15,51 +15,48 @@ func makeSettings(jsonData map[string]any, secureData map[string]string) backend
 	}
 }
 
-func TestLoadPluginSettings_PluginsRoot(t *testing.T) {
+func TestLoadPluginSettings_ComputeURL(t *testing.T) {
 	s, err := LoadPluginSettings(makeSettings(
-		map[string]any{"pluginsRoot": "/x/plugins"},
+		map[string]any{"computeUrl": "http://127.0.0.1:8790"},
 		nil,
 	))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if s.PluginsRoot != "/x/plugins" {
-		t.Errorf("PluginsRoot = %q, want %q", s.PluginsRoot, "/x/plugins")
+	if s.ComputeURL != "http://127.0.0.1:8790" {
+		t.Errorf("ComputeURL = %q, want %q", s.ComputeURL, "http://127.0.0.1:8790")
 	}
 }
 
-func TestLoadPluginSettings_PluginTokens(t *testing.T) {
+func TestLoadPluginSettings_PluginsInstallDir(t *testing.T) {
 	s, err := LoadPluginSettings(makeSettings(
+		map[string]any{"pluginsInstallDir": "/x/plugins"},
 		nil,
-		map[string]string{"pluginTokens": `{"yfinance-app":"tok123"}`},
 	))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := s.PluginTokens["yfinance-app"]; got != "tok123" {
-		t.Errorf("PluginTokens[yfinance-app] = %q, want %q", got, "tok123")
+	if s.PluginsInstallDir != "/x/plugins" {
+		t.Errorf("PluginsInstallDir = %q, want %q", s.PluginsInstallDir, "/x/plugins")
 	}
 }
 
-func TestLoadPluginSettings_AbsentPluginTokens(t *testing.T) {
+func TestLoadPluginSettings_Empty(t *testing.T) {
 	s, err := LoadPluginSettings(makeSettings(nil, nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if s.PluginTokens == nil {
-		t.Error("PluginTokens should be non-nil empty map when absent")
-	}
-	if len(s.PluginTokens) != 0 {
-		t.Errorf("PluginTokens should be empty, got %v", s.PluginTokens)
+	if s.ComputeURL != "" {
+		t.Errorf("ComputeURL should be empty, got %q", s.ComputeURL)
 	}
 }
 
-func TestLoadPluginSettings_MalformedPluginTokens(t *testing.T) {
-	_, err := LoadPluginSettings(makeSettings(
-		nil,
-		map[string]string{"pluginTokens": `not-json`},
-	))
+func TestLoadPluginSettings_MalformedJSON(t *testing.T) {
+	src := backend.DataSourceInstanceSettings{
+		JSONData: []byte(`not-json`),
+	}
+	_, err := LoadPluginSettings(src)
 	if err == nil {
-		t.Error("expected error for malformed pluginTokens JSON, got nil")
+		t.Error("expected error for malformed JSONData, got nil")
 	}
 }

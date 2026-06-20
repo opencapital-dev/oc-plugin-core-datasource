@@ -2,9 +2,7 @@ package plugin
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,14 +12,12 @@ import (
 
 	"github.com/opencapital-dev/oc-plugin-sdk/computeclient"
 
-	_ "github.com/mutecomm/go-sqlcipher/v4"
-
 	"github.com/portfoliomangement/query-service/pkg/models"
 )
 
 // stubDatasource builds a Datasource whose compute client points at a stub
-// sidecar. pc is nil, so mintJWT returns "" (unauthenticated path) — the
-// existing backend tests exercise this same unauthenticated mode.
+// sidecar. The datasource posts {source, window} and the handler returns a
+// canned neutral frame.
 func stubDatasource(t *testing.T, handler http.HandlerFunc) *Datasource {
 	t.Helper()
 	srv := httptest.NewServer(handler)
@@ -50,6 +46,10 @@ func TestQuery_Scalar(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		if req["source"] != "total_return()" {
 			t.Errorf("source=%v want total_return()", req["source"])
+		}
+		// Verify no jwt field is sent.
+		if _, hasJWT := req["jwt"]; hasJWT {
+			t.Error("request must not contain a jwt field")
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"output":"scalar","columns":["value"],"rows":[[12.5]]}`))
@@ -119,139 +119,74 @@ func TestQueryData_FansOut(t *testing.T) {
 	}
 }
 
-// --- hasPluginPrefix ---
-
-func TestHasPluginPrefix(t *testing.T) {
-	cases := []struct {
-		src  string
-		want bool
-	}{
-		{`sectors = yfinance-app/classification{portfolio="p1"} @latest`, true},
-		{`nav{portfolio="p1"} @window`, false},
-		{``, false},
-		{`foo/bar{}`, true},
-		{`foobar{}`, false},
-		{`no_slash`, false},
-	}
-	for _, c := range cases {
-		if got := hasPluginPrefix(c.src); got != c.want {
-			t.Errorf("hasPluginPrefix(%q) = %v, want %v", c.src, got, c.want)
+// TestQuery_WindowForwarded verifies from/to are forwarded in the request body.
+func TestQuery_WindowForwarded(t *testing.T) {
+	var gotWindow map[string]any
+	ds := stubDatasource(t, func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if win, ok := req["window"].(map[string]any); ok {
+			gotWindow = win
 		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output":"scalar","columns":["v"],"rows":[[1]]}`))
+	})
+
+	body, _ := json.Marshal(map[string]string{"source": "f()"})
+	q := backend.DataQuery{
+		RefID: "A",
+		JSON:  body,
+		TimeRange: backend.TimeRange{
+			From: time.Unix(1000, 0),
+			To:   time.Unix(2000, 0),
+		},
+	}
+	resp := ds.query(context.Background(), q)
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %v", resp.Error)
+	}
+	if gotWindow == nil {
+		t.Fatal("window not present in request body")
+	}
+	wantFrom := float64(time.Unix(1000, 0).UnixMicro())
+	wantTo := float64(time.Unix(2000, 0).UnixMicro())
+	if gotWindow["from"] != wantFrom {
+		t.Errorf("window.from=%v want %v", gotWindow["from"], wantFrom)
+	}
+	if gotWindow["to"] != wantTo {
+		t.Errorf("window.to=%v want %v", gotWindow["to"], wantTo)
 	}
 }
 
-// --- resolvePrefetched ---
+// TestQuery_VarSubstitution confirms vars are substituted before forwarding.
+func TestQuery_VarSubstitution(t *testing.T) {
+	var gotSource string
+	ds := stubDatasource(t, func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		gotSource, _ = req["source"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output":"scalar","columns":["v"],"rows":[[1]]}`))
+	})
 
-// classificationDB returns an in-memory SQLite with a gw_classification view
-// matching the yfinance schema: portfolio, instrument_id, ts, sector.
-func classificationDB(t *testing.T) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
+	body, _ := json.Marshal(map[string]any{
+		"source": `total_return(portfolio="$portfolio_id")`,
+		"vars":   map[string]string{"portfolio_id": "demo"},
+	})
+	q := backend.DataQuery{
+		RefID: "A",
+		JSON:  body,
+		TimeRange: backend.TimeRange{
+			From: time.Unix(0, 0),
+			To:   time.Unix(100, 0),
+		},
 	}
-	t.Cleanup(func() { db.Close() })
-
-	_, err = db.Exec(`CREATE TABLE classification_base (
-		portfolio     TEXT NOT NULL,
-		instrument_id TEXT NOT NULL,
-		ts            INTEGER NOT NULL,
-		sector        TEXT NOT NULL
-	)`)
-	if err != nil {
-		t.Fatalf("create table: %v", err)
+	resp := ds.query(context.Background(), q)
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %v", resp.Error)
 	}
-	_, err = db.Exec(`CREATE VIEW gw_classification AS
-		SELECT portfolio, instrument_id, ts, sector FROM classification_base`)
-	if err != nil {
-		t.Fatalf("create view: %v", err)
+	want := `total_return(portfolio="demo")`
+	if gotSource != want {
+		t.Errorf("source forwarded=%q want %q", gotSource, want)
 	}
-	_, err = db.Exec(`INSERT INTO classification_base VALUES
-		("p1", "AAPL", 1000, "Technology"),
-		("p1", "MSFT", 1000, "Software")`)
-	if err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-	return db
-}
-
-func TestResolvePrefetched_HappyPath(t *testing.T) {
-	db := classificationDB(t)
-
-	openCalls := 0
-	open := func(_ context.Context, pluginID string) (*sql.DB, error) {
-		if pluginID != "yfinance-app" {
-			t.Errorf("open called with unexpected pluginID %q", pluginID)
-		}
-		openCalls++
-		return db, nil
-	}
-
-	bindings := map[string]string{
-		"sectors": `yfinance-app/classification{portfolio="p1"} @latest`,
-		"navs":    `nav{portfolio="p1"} @window`,
-	}
-
-	prefetched, err := resolvePrefetched(context.Background(), bindings, open, 0, 9999)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Only the prefixed binding should be resolved.
-	if _, ok := prefetched["sectors"]; !ok {
-		t.Error("expected 'sectors' in prefetched map")
-	}
-	if _, ok := prefetched["navs"]; ok {
-		t.Error("unprefixed 'navs' should not be in prefetched map")
-	}
-	// open must have been called exactly once.
-	if openCalls != 1 {
-		t.Errorf("open called %d times, want 1", openCalls)
-	}
-	// Frame must have the view's columns.
-	frame := prefetched["sectors"]
-	wantCols := []string{"portfolio", "instrument_id", "ts", "sector"}
-	if len(frame.Columns) != len(wantCols) {
-		t.Fatalf("columns %v, want %v", frame.Columns, wantCols)
-	}
-	for i, c := range frame.Columns {
-		if c != wantCols[i] {
-			t.Errorf("col[%d] %q want %q", i, c, wantCols[i])
-		}
-	}
-	// Two rows inserted for p1.
-	if len(frame.Rows) != 2 {
-		t.Errorf("rows %d, want 2", len(frame.Rows))
-	}
-}
-
-func TestResolvePrefetched_OpenError(t *testing.T) {
-	open := func(_ context.Context, pluginID string) (*sql.DB, error) {
-		return nil, fmt.Errorf("disk full")
-	}
-
-	bindings := map[string]string{
-		"sectors": `yfinance-app/classification{portfolio="p1"} @latest`,
-	}
-
-	_, err := resolvePrefetched(context.Background(), bindings, open, 0, 9999)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	errMsg := err.Error()
-	if !contains(errMsg, "yfinance-app") {
-		t.Errorf("error %q should mention plugin id", errMsg)
-	}
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(sub) == 0 ||
-		func() bool {
-			for i := 0; i <= len(s)-len(sub); i++ {
-				if s[i:i+len(sub)] == sub {
-					return true
-				}
-			}
-			return false
-		}())
 }
