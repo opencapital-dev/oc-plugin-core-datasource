@@ -4,7 +4,7 @@ go 1.26.3
 
 require (
 	github.com/grafana/grafana-plugin-sdk-go v0.292.1
-	github.com/opencapital-dev/oc-plugin-sdk v0.2.0
+	github.com/opencapital-dev/oc-plugin-sdk v0.2.1
 )
 
 require (
