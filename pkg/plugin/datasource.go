@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -36,6 +38,7 @@ type Datasource struct {
 	settings    *models.PluginSettings
 	compute     *computeclient.Client
 	installRoot string
+	baseFuncDir string
 }
 
 // NewDatasource is the SDK factory. Grafana calls it once per
@@ -51,10 +54,16 @@ func NewDatasource(_ context.Context, src backend.DataSourceInstanceSettings) (i
 		log.DefaultLogger.Warn("core-datasource: could not derive plugins install root; metric refs will fail", "error", err)
 	}
 
+	baseFuncDir := ""
+	if exe, err := os.Executable(); err == nil {
+		baseFuncDir = filepath.Join(filepath.Dir(exe), "functions")
+	}
+
 	return &Datasource{
 		settings:    settings,
 		compute:     computeclient.New(settings.ComputeURL, &http.Client{Timeout: 60 * time.Second}),
 		installRoot: installRoot,
+		baseFuncDir: baseFuncDir,
 	}, nil
 }
 
@@ -90,10 +99,11 @@ func (d *Datasource) query(ctx context.Context, q backend.DataQuery) backend.Dat
 		return backend.ErrDataResponse(backend.StatusBadRequest, err.Error())
 	}
 	code = substituteVars(code, pm.Vars)
+	full := loadFunctions(d.baseFuncDir, d.installRoot, pm.Ref) + code
 
 	from, to := q.TimeRange.From.UnixMicro(), q.TimeRange.To.UnixMicro()
 
-	frame, err := d.compute.Compute(ctx, code, from, to)
+	frame, err := d.compute.Compute(ctx, full, from, to)
 	if err != nil {
 		var ce *computeclient.ComputeError
 		if errors.As(err, &ce) {

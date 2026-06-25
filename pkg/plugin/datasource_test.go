@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -155,6 +156,21 @@ func TestQuery_WindowForwarded(t *testing.T) {
 	}
 	if gotWindow["to"] != wantTo {
 		t.Errorf("window.to=%v want %v", gotWindow["to"], wantTo)
+	}
+}
+
+func TestComposeSourcePrependsHelpers(t *testing.T) {
+	tmp := t.TempDir()
+	base := tmp + "/ds/functions"
+	writePy(t, base, "series.py", "def over_time(fn, step):\n    return None\n")
+	panel := "@metric(output='series')\ndef m():\n    return over_time(lambda t: 1.0, '1d')\n"
+
+	full := loadFunctions(base, tmp, "core-app/m") + substituteVars(panel, nil)
+	if !strings.HasPrefix(full, "def over_time") {
+		t.Fatal("helpers must be prepended before panel source")
+	}
+	if !strings.Contains(full, "def m()") {
+		t.Fatal("panel source must be present")
 	}
 }
 
