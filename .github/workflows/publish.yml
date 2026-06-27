@@ -1,74 +1,23 @@
-name: publish
+name: release
+
+# On merge to main: the reusable pipeline runs semantic-release (Conventional
+# Commits -> next version), builds the Go backend on native runners, pushes +
+# signs the plugin to GHCR, then tags + bumps oc-plugin.json versions[] and cuts
+# a GitHub Release. No manual tagging.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+
 permissions:
   contents: write
   packages: write
   id-token: write
-jobs:
-  # The plugin backend links go-sqlcipher (CGO + OpenSSL), which does not
-  # cross-compile cleanly. Build each desktop target on its NATIVE runner —
-  # macOS for darwin (arm64 + amd64), Windows for windows-amd64 — then assemble
-  # + sign on Linux. Plugins run in the desktop app, so linux targets are not built.
-  build-backend:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            targets: "build:darwinARM64 build:darwin"
-          - os: windows-latest
-            targets: "build:windows"
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.26"
-      - uses: magefile/mage-action@v3
-        with:
-          install-only: true
-      - name: build backend
-        shell: bash
-        run: |
-          for t in ${{ matrix.targets }}; do mage $t; done
-          ls -la dist/gpx_*
-      - uses: actions/upload-artifact@v4
-        with:
-          name: backend-${{ matrix.os }}
-          path: dist/gpx_*
-          if-no-files-found: error
 
-  publish:
-    needs: build-backend
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.26"
-      - uses: magefile/mage-action@v3
-        with:
-          install-only: true
-      - name: build frontend (produces dist/plugin.json + assets)
-        run: npm ci && npm run build
-      - name: stage functions into dist/ via mage (CI must call the mage target, never an inline copy)
-        run: mage copyFunctions
-      - uses: actions/download-artifact@v4
-        with:
-          path: /tmp/backends
-      - name: collect backend binaries into dist/
-        run: |
-          cp /tmp/backends/*/gpx_* dist/
-          ls -la dist/
-      - uses: opencapital-dev/oc-plugin-publish-action@v1
-        with:
-          dir: .
-          id: core-datasource
-          owner: opencapital-dev
-          version: ${{ github.ref_name }}
-          platforms: darwin-amd64,darwin-arm64,windows-amd64
+jobs:
+  release:
+    uses: opencapital-dev/opencapital/.github/workflows/plugin-release.yml@main
+    with:
+      id: core-datasource
+      owner: opencapital-dev
+      platforms: darwin-amd64,darwin-arm64,windows-amd64
+    secrets: inherit
