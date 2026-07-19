@@ -1,4 +1,4 @@
-import { DataSource } from './datasource';
+import { DataSource, variableQueryToTarget } from './datasource';
 
 jest.mock('@grafana/runtime', () => ({
   DataSourceWithBackend: class {
@@ -38,8 +38,6 @@ test('filterQuery accepts a ref with no source', () => {
 test('fetchMetricSource calls the resource endpoint', async () => {
   expect(await ds().fetchMetricSource('yfinance-app/m')).toBe('print(1)');
 });
-
-import { variableQueryToTarget } from './datasource';
 
 test('variableQueryToTarget builds a ref target when the variable query has a ref', () => {
   const t = variableQueryToTarget({ refId: 'V', ref: 'core-app/portfolios' }, (s: string) => s);

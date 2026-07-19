@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { QueryEditorProps, GrafanaTheme2 } from '@grafana/data';
-import { Button, CodeEditor, Drawer, useStyles2 } from '@grafana/ui';
-import type { Monaco } from '@grafana/ui';
+import { Button, CodeEditor, Drawer, useStyles2, type Monaco } from '@grafana/ui';
 import { css } from '@emotion/css';
 
 import { DataSource } from '../datasource';
